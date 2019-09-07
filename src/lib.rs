@@ -1,244 +1,541 @@
 //! Rust support for [Redis Streams](https://github.com/redis/redis-rcp/blob/master/RCP11.md)
-//! 
+//!
 //! [Streams: a new general purpose data structure in Redis.](http://antirez.com/news/114)
 //! [An update on Redis Streams development](http://antirez.com/news/116)
-//! 
+//!
 //! To use Redis Streams, you must have a version of Redis installed with stream support enabled. It is planned
 //! for streams to appear in Redis 5.0.
 
-extern crate redis;
 extern crate itertools;
+extern crate r2d2_redis;
 
-use redis::*;
 use std::slice;
 
+use r2d2_redis::redis::*;
+
 pub fn xadd(stream: &str) -> Xadd {
-    let mut cmd = cmd("XADD");
-    cmd.arg(stream).arg("*");
-    Xadd(cmd)
+	let mut cmd = cmd("XADD");
+	cmd.arg(stream).arg("*");
+	Xadd(cmd)
 }
 
 pub fn xadd_maxlen(stream: &str, max_len: usize) -> Xadd {
-    let mut cmd = cmd("XADD");
-    cmd.arg(stream).arg("MAXLEN").arg(max_len).arg("*");
-    Xadd(cmd)
+	let mut cmd = cmd("XADD");
+	cmd.arg(stream).arg("MAXLEN").arg(max_len).arg("*");
+	Xadd(cmd)
 }
 
 pub struct Xadd(Cmd);
 
 impl Xadd {
-    pub fn entry<K: ToRedisArgs, V: ToRedisArgs>(mut self, key: K, val: V) -> Self {
-        self.0.arg(key).arg(val);
-        self
-    }
+	pub fn entry<K: ToRedisArgs, V: ToRedisArgs>(mut self, key: K, val: V) -> Self {
+		self.0.arg(key).arg(val);
+		self
+	}
 
-    pub fn query<RV: FromRedisValue>(&self, con: &Connection) -> RedisResult<RV> {
-        self.0.query(con)
-    }
+	pub fn query<RV: FromRedisValue>(&self, con: &mut Connection) -> RedisResult<RV> {
+		self.0.query(con)
+	}
 
-    pub fn execute(&self, con: &Connection) {
-        let _ : () = self.query(con).unwrap();
-    }
+	pub fn execute(&self, con: &mut Connection) {
+		let _: () = self.query(con).unwrap();
+	}
 }
 
 pub trait RedisStream {
-    fn xadd<S: ToRedisArgs, K: ToRedisArgs, V: ToRedisArgs, RV: FromRedisValue>(&mut self, stream: S, key: K, value: V) -> RedisResult<RV>;
-    fn xadd_maxlen<S: ToRedisArgs, L: ToRedisArgs, K: ToRedisArgs, V: ToRedisArgs, RV: FromRedisValue>(&mut self, stream: S, max_len: L, key: K, value: V) -> RedisResult<RV>;
-    fn xadd_multiple<S: ToRedisArgs, K: ToRedisArgs, V: ToRedisArgs, RV: FromRedisValue>(&mut self, stream: S, entries: &[(K, V)]) -> RedisResult<RV>;
-    fn xadd_maxlen_multiple<S: ToRedisArgs, L: ToRedisArgs, K: ToRedisArgs, V: ToRedisArgs, RV: FromRedisValue>(&mut self, stream: S, max_len: L, entries: &[(K, V)]) -> RedisResult<RV>;
+	fn xadd<S: ToRedisArgs, K: ToRedisArgs, V: ToRedisArgs, RV: FromRedisValue>(
+		&mut self,
+		stream: S,
+		key: K,
+		value: V,
+	) -> RedisResult<RV>;
+	fn xadd_maxlen<
+		S: ToRedisArgs,
+		L: ToRedisArgs,
+		K: ToRedisArgs,
+		V: ToRedisArgs,
+		RV: FromRedisValue,
+	>(
+		&mut self,
+		stream: S,
+		max_len: L,
+		key: K,
+		value: V,
+	) -> RedisResult<RV>;
+	fn xadd_multiple<S: ToRedisArgs, K: ToRedisArgs, V: ToRedisArgs, RV: FromRedisValue>(
+		&mut self,
+		stream: S,
+		entries: &[(K, V)],
+	) -> RedisResult<RV>;
+	fn xadd_maxlen_multiple<
+		S: ToRedisArgs,
+		L: ToRedisArgs,
+		K: ToRedisArgs,
+		V: ToRedisArgs,
+		RV: FromRedisValue,
+	>(
+		&mut self,
+		stream: S,
+		max_len: L,
+		entries: &[(K, V)],
+	) -> RedisResult<RV>;
 
-    fn xdel<S: ToRedisArgs, I: ToRedisArgs, RV: FromRedisValue>(&mut self, stream: S, id: I) -> RedisResult<RV>;
-    fn xlen<S: ToRedisArgs, RV: FromRedisValue>(&mut self, stream: S) -> RedisResult<RV>;
+	fn xdel<S: ToRedisArgs, I: ToRedisArgs, RV: FromRedisValue>(
+		&mut self,
+		stream: S,
+		id: I,
+	) -> RedisResult<RV>;
+	fn xlen<S: ToRedisArgs, RV: FromRedisValue>(&mut self, stream: S) -> RedisResult<RV>;
 
-    fn xtrim_maxlen<S: ToRedisArgs, L: ToRedisArgs, RV: FromRedisValue>(&mut self, stream: S, max_len: L) -> RedisResult<RV>;
-    fn xtrim_approx_maxlen<S: ToRedisArgs, L: ToRedisArgs, RV: FromRedisValue>(&mut self, stream: S, max_len: L) -> RedisResult<RV>;
+	fn xtrim_maxlen<S: ToRedisArgs, L: ToRedisArgs, RV: FromRedisValue>(
+		&mut self,
+		stream: S,
+		max_len: L,
+	) -> RedisResult<RV>;
+	fn xtrim_approx_maxlen<S: ToRedisArgs, L: ToRedisArgs, RV: FromRedisValue>(
+		&mut self,
+		stream: S,
+		max_len: L,
+	) -> RedisResult<RV>;
 
-    fn xrange<S: ToRedisArgs, A: ToRedisArgs, B: ToRedisArgs, RV: FromRedisValue>(&mut self, stream: S, start: A, stop: B) -> RedisResult<RV>;
-    fn xrange_count<S: ToRedisArgs, A: ToRedisArgs, B: ToRedisArgs, C: ToRedisArgs, RV: FromRedisValue>(&mut self, stream: S, start: A, stop: B, count: C) -> RedisResult<RV>;
+	fn xrange<S: ToRedisArgs, A: ToRedisArgs, B: ToRedisArgs, RV: FromRedisValue>(
+		&mut self,
+		stream: S,
+		start: A,
+		stop: B,
+	) -> RedisResult<RV>;
+	fn xrange_count<
+		S: ToRedisArgs,
+		A: ToRedisArgs,
+		B: ToRedisArgs,
+		C: ToRedisArgs,
+		RV: FromRedisValue,
+	>(
+		&mut self,
+		stream: S,
+		start: A,
+		stop: B,
+		count: C,
+	) -> RedisResult<RV>;
 
-    fn xrevrange<S: ToRedisArgs, A: ToRedisArgs, B: ToRedisArgs, RV: FromRedisValue>(&mut self, stream: S, start: A, stop: B) -> RedisResult<RV>;
-    fn xrevrange_count<S: ToRedisArgs, A: ToRedisArgs, B: ToRedisArgs, C: ToRedisArgs, RV: FromRedisValue>(&mut self, stream: S, start: A, stop: B, count: C) -> RedisResult<RV>;
+	fn xrevrange<S: ToRedisArgs, A: ToRedisArgs, B: ToRedisArgs, RV: FromRedisValue>(
+		&mut self,
+		stream: S,
+		start: A,
+		stop: B,
+	) -> RedisResult<RV>;
+	fn xrevrange_count<
+		S: ToRedisArgs,
+		A: ToRedisArgs,
+		B: ToRedisArgs,
+		C: ToRedisArgs,
+		RV: FromRedisValue,
+	>(
+		&mut self,
+		stream: S,
+		start: A,
+		stop: B,
+		count: C,
+	) -> RedisResult<RV>;
 
-    fn xread<S: ToRedisArgs, I: ToRedisArgs, RV: FromRedisValue>(&mut self, stream: S, id: I) -> RedisResult<RV>;
-    fn xread_multiple<RV: FromRedisValue>(&mut self, entries: &[(String, String)]) -> RedisResult<RV>;
+	fn xread<S: ToRedisArgs, I: ToRedisArgs, RV: FromRedisValue>(
+		&mut self,
+		stream: S,
+		id: I,
+	) -> RedisResult<RV>;
+	fn xread_multiple<RV: FromRedisValue>(
+		&mut self,
+		entries: &[(String, String)],
+	) -> RedisResult<RV>;
 
-    fn xread_block<B: ToRedisArgs, S: ToRedisArgs, I: ToRedisArgs, RV: FromRedisValue>(&mut self, block: B, stream: S, id: I) -> RedisResult<RV>;
-    fn xread_block_multiple<B: ToRedisArgs, RV: FromRedisValue>(&mut self, block: B, entries: &[(String, String)]) -> RedisResult<RV>;
+	fn xread_block<B: ToRedisArgs, S: ToRedisArgs, I: ToRedisArgs, RV: FromRedisValue>(
+		&mut self,
+		block: B,
+		stream: S,
+		id: I,
+	) -> RedisResult<RV>;
+	fn xread_block_multiple<B: ToRedisArgs, RV: FromRedisValue>(
+		&mut self,
+		block: B,
+		entries: &[(String, String)],
+	) -> RedisResult<RV>;
 
-    fn xread_count<S: ToRedisArgs, I: ToRedisArgs, RV: FromRedisValue>(&mut self, count: isize, stream: S, id: I) -> RedisResult<RV>;
-    fn xread_count_multiple<RV: FromRedisValue>(&mut self, count: isize, entries: &[(String,  String)]) -> RedisResult<RV>;
+	fn xread_count<S: ToRedisArgs, I: ToRedisArgs, RV: FromRedisValue>(
+		&mut self,
+		count: isize,
+		stream: S,
+		id: I,
+	) -> RedisResult<RV>;
+	fn xread_count_multiple<RV: FromRedisValue>(
+		&mut self,
+		count: isize,
+		entries: &[(String, String)],
+	) -> RedisResult<RV>;
 
-    fn xread_count_block<B: ToRedisArgs, S: ToRedisArgs, I: ToRedisArgs, RV: FromRedisValue>(&mut self, count: isize, block: B, stream: S, id: I) -> RedisResult<RV>;
-    fn xread_count_block_multiple<B: ToRedisArgs, RV: FromRedisValue>(&mut self, count: isize, block: B, entries: &[(String, String)]) -> RedisResult<RV>;
+	fn xread_count_block<B: ToRedisArgs, S: ToRedisArgs, I: ToRedisArgs, RV: FromRedisValue>(
+		&mut self,
+		count: isize,
+		block: B,
+		stream: S,
+		id: I,
+	) -> RedisResult<RV>;
+	fn xread_count_block_multiple<B: ToRedisArgs, RV: FromRedisValue>(
+		&mut self,
+		count: isize,
+		block: B,
+		entries: &[(String, String)],
+	) -> RedisResult<RV>;
 }
 
-impl RedisStream for redis::Connection {
-    fn xadd<S: ToRedisArgs, K: ToRedisArgs, V: ToRedisArgs, RV: FromRedisValue>(&mut self, stream: S, key: K, value: V) -> RedisResult<RV> {
-        cmd("XADD").arg(stream).arg("*").arg(key).arg(value).query(self)
-    }
+impl RedisStream for Connection {
+	fn xadd<S: ToRedisArgs, K: ToRedisArgs, V: ToRedisArgs, RV: FromRedisValue>(
+		&mut self,
+		stream: S,
+		key: K,
+		value: V,
+	) -> RedisResult<RV> {
+		cmd("XADD")
+			.arg(stream)
+			.arg("*")
+			.arg(key)
+			.arg(value)
+			.query(self)
+	}
 
-    fn xadd_maxlen<S: ToRedisArgs, L: ToRedisArgs, K: ToRedisArgs, V: ToRedisArgs, RV: FromRedisValue>(&mut self, stream: S, max_len: L, key: K, value: V) -> RedisResult<RV> {
-        cmd("XADD").arg(stream).arg("MAXLEN").arg(max_len).arg("*").arg(key).arg(value).query(self)
-    }
+	fn xadd_maxlen<
+		S: ToRedisArgs,
+		L: ToRedisArgs,
+		K: ToRedisArgs,
+		V: ToRedisArgs,
+		RV: FromRedisValue,
+	>(
+		&mut self,
+		stream: S,
+		max_len: L,
+		key: K,
+		value: V,
+	) -> RedisResult<RV> {
+		cmd("XADD")
+			.arg(stream)
+			.arg("MAXLEN")
+			.arg(max_len)
+			.arg("*")
+			.arg(key)
+			.arg(value)
+			.query(self)
+	}
 
-    fn xadd_multiple<S: ToRedisArgs, K: ToRedisArgs, V: ToRedisArgs, RV: FromRedisValue>(&mut self, stream: S, entries: &[(K, V)]) -> RedisResult<RV> {
-        cmd("XADD").arg(stream).arg("*").arg(entries).query(self)
-    }
+	fn xadd_multiple<S: ToRedisArgs, K: ToRedisArgs, V: ToRedisArgs, RV: FromRedisValue>(
+		&mut self,
+		stream: S,
+		entries: &[(K, V)],
+	) -> RedisResult<RV> {
+		cmd("XADD").arg(stream).arg("*").arg(entries).query(self)
+	}
 
-    fn xadd_maxlen_multiple<S: ToRedisArgs, L: ToRedisArgs, K: ToRedisArgs, V: ToRedisArgs, RV: FromRedisValue>(&mut self, stream: S, max_len: L, entries: &[(K, V)]) -> RedisResult<RV> {
-        cmd("XADD").arg(stream).arg("MAXLEN").arg(max_len).arg("*").arg(entries).query(self)
-    }
+	fn xadd_maxlen_multiple<
+		S: ToRedisArgs,
+		L: ToRedisArgs,
+		K: ToRedisArgs,
+		V: ToRedisArgs,
+		RV: FromRedisValue,
+	>(
+		&mut self,
+		stream: S,
+		max_len: L,
+		entries: &[(K, V)],
+	) -> RedisResult<RV> {
+		cmd("XADD")
+			.arg(stream)
+			.arg("MAXLEN")
+			.arg(max_len)
+			.arg("*")
+			.arg(entries)
+			.query(self)
+	}
 
-    fn xdel<S: ToRedisArgs, I: ToRedisArgs, RV: FromRedisValue>(&mut self, stream: S, id: I) -> RedisResult<RV> {
-        cmd("XDEL").arg(stream).arg(id).query(self)
-    }
+	fn xdel<S: ToRedisArgs, I: ToRedisArgs, RV: FromRedisValue>(
+		&mut self,
+		stream: S,
+		id: I,
+	) -> RedisResult<RV> {
+		cmd("XDEL").arg(stream).arg(id).query(self)
+	}
 
-    fn xlen<S: ToRedisArgs, RV: FromRedisValue>(&mut self, stream: S) -> RedisResult<RV> {
-        cmd("XLEN").arg(stream).query(self)
-    }
+	fn xlen<S: ToRedisArgs, RV: FromRedisValue>(&mut self, stream: S) -> RedisResult<RV> {
+		cmd("XLEN").arg(stream).query(self)
+	}
 
-    fn xtrim_maxlen<S: ToRedisArgs, L: ToRedisArgs, RV: FromRedisValue>(&mut self, stream: S, max_len: L) -> RedisResult<RV> {
-        cmd("XTRIM").arg(stream).arg("MAXLEN").arg(max_len).query(self)
-    }    
-    fn xtrim_approx_maxlen<S: ToRedisArgs, L: ToRedisArgs, RV: FromRedisValue>(&mut self, stream: S, max_len: L) -> RedisResult<RV> {
-        cmd("XTRIM").arg(stream).arg("MAXLEN").arg("~").arg(max_len).query(self)
-    }    
-    fn xrange<S: ToRedisArgs, A: ToRedisArgs, B: ToRedisArgs, RV: FromRedisValue>(&mut self, stream: S, start: A, stop: B) -> RedisResult<RV> {
-        cmd("XRANGE").arg(stream).arg(start).arg(stop).query(self)
-    }
+	fn xtrim_maxlen<S: ToRedisArgs, L: ToRedisArgs, RV: FromRedisValue>(
+		&mut self,
+		stream: S,
+		max_len: L,
+	) -> RedisResult<RV> {
+		cmd("XTRIM")
+			.arg(stream)
+			.arg("MAXLEN")
+			.arg(max_len)
+			.query(self)
+	}
+	fn xtrim_approx_maxlen<S: ToRedisArgs, L: ToRedisArgs, RV: FromRedisValue>(
+		&mut self,
+		stream: S,
+		max_len: L,
+	) -> RedisResult<RV> {
+		cmd("XTRIM")
+			.arg(stream)
+			.arg("MAXLEN")
+			.arg("~")
+			.arg(max_len)
+			.query(self)
+	}
+	fn xrange<S: ToRedisArgs, A: ToRedisArgs, B: ToRedisArgs, RV: FromRedisValue>(
+		&mut self,
+		stream: S,
+		start: A,
+		stop: B,
+	) -> RedisResult<RV> {
+		cmd("XRANGE").arg(stream).arg(start).arg(stop).query(self)
+	}
 
-    fn xrange_count<S: ToRedisArgs, A: ToRedisArgs, B: ToRedisArgs, C: ToRedisArgs, RV: FromRedisValue>(&mut self, stream: S, start: A, stop: B, count: C) -> RedisResult<RV> {
-        cmd("XRANGE").arg(stream).arg(start).arg(stop).arg("COUNT").arg(count).query(self)
-    }
+	fn xrange_count<
+		S: ToRedisArgs,
+		A: ToRedisArgs,
+		B: ToRedisArgs,
+		C: ToRedisArgs,
+		RV: FromRedisValue,
+	>(
+		&mut self,
+		stream: S,
+		start: A,
+		stop: B,
+		count: C,
+	) -> RedisResult<RV> {
+		cmd("XRANGE")
+			.arg(stream)
+			.arg(start)
+			.arg(stop)
+			.arg("COUNT")
+			.arg(count)
+			.query(self)
+	}
 
-    fn xrevrange<S: ToRedisArgs, A: ToRedisArgs, B: ToRedisArgs, RV: FromRedisValue>(&mut self, stream: S, start: A, stop: B) -> RedisResult<RV> {
-        cmd("XREVRANGE").arg(stream).arg(start).arg(stop).query(self)
-    }
+	fn xrevrange<S: ToRedisArgs, A: ToRedisArgs, B: ToRedisArgs, RV: FromRedisValue>(
+		&mut self,
+		stream: S,
+		start: A,
+		stop: B,
+	) -> RedisResult<RV> {
+		cmd("XREVRANGE")
+			.arg(stream)
+			.arg(start)
+			.arg(stop)
+			.query(self)
+	}
 
-    fn xrevrange_count<S: ToRedisArgs, A: ToRedisArgs, B: ToRedisArgs, C: ToRedisArgs, RV: FromRedisValue>(&mut self, stream: S, start: A, stop: B, count: C) -> RedisResult<RV> {
-        cmd("XREVRANGE").arg(stream).arg(start).arg(stop).arg("COUNT").arg(count).query(self)
-    }    
+	fn xrevrange_count<
+		S: ToRedisArgs,
+		A: ToRedisArgs,
+		B: ToRedisArgs,
+		C: ToRedisArgs,
+		RV: FromRedisValue,
+	>(
+		&mut self,
+		stream: S,
+		start: A,
+		stop: B,
+		count: C,
+	) -> RedisResult<RV> {
+		cmd("XREVRANGE")
+			.arg(stream)
+			.arg(start)
+			.arg(stop)
+			.arg("COUNT")
+			.arg(count)
+			.query(self)
+	}
 
-    fn xread<S: ToRedisArgs, I: ToRedisArgs, RV: FromRedisValue>(&mut self, stream: S, id: I) -> RedisResult<RV> {
-        cmd("XREAD").arg("STREAMS").arg(stream).arg(id).query(self)
-    }
+	fn xread<S: ToRedisArgs, I: ToRedisArgs, RV: FromRedisValue>(
+		&mut self,
+		stream: S,
+		id: I,
+	) -> RedisResult<RV> {
+		cmd("XREAD").arg("STREAMS").arg(stream).arg(id).query(self)
+	}
 
-    fn xread_multiple<RV: FromRedisValue>(&mut self, entries: &[(String, String)]) -> RedisResult<RV> {
-        let mut cmd = cmd("XREAD");
-        cmd.arg("STREAMS");
-        for &(ref s, _) in entries.iter() {
-            cmd.arg(s);
-        }
-        for &(_, ref i) in entries.iter() {
-            cmd.arg(i);
-        }
-        cmd.query(self)       
-    }
+	fn xread_multiple<RV: FromRedisValue>(
+		&mut self,
+		entries: &[(String, String)],
+	) -> RedisResult<RV> {
+		let mut cmd = cmd("XREAD");
+		cmd.arg("STREAMS");
+		for &(ref s, _) in entries.iter() {
+			cmd.arg(s);
+		}
+		for &(_, ref i) in entries.iter() {
+			cmd.arg(i);
+		}
+		cmd.query(self)
+	}
 
-    fn xread_block<B: ToRedisArgs, S: ToRedisArgs, I: ToRedisArgs, RV: FromRedisValue>(&mut self, block: B, stream: S, id: I) -> RedisResult<RV> {
-        cmd("XREAD").arg("BLOCK").arg(block).arg("STREAMS").arg(stream).arg(id).query(self)
-    }
+	fn xread_block<B: ToRedisArgs, S: ToRedisArgs, I: ToRedisArgs, RV: FromRedisValue>(
+		&mut self,
+		block: B,
+		stream: S,
+		id: I,
+	) -> RedisResult<RV> {
+		cmd("XREAD")
+			.arg("BLOCK")
+			.arg(block)
+			.arg("STREAMS")
+			.arg(stream)
+			.arg(id)
+			.query(self)
+	}
 
-    fn xread_block_multiple<B: ToRedisArgs, RV: FromRedisValue>(&mut self, block: B, entries: &[(String, String)]) -> RedisResult<RV> {
-        let mut cmd = cmd("XREAD");
-        cmd.arg("BLOCK").arg(block).arg("STREAMS");
-        for &(ref s, _) in entries.iter() {
-            cmd.arg(s);
-        }
-        for &(_, ref i) in entries.iter() {
-            cmd.arg(i);
-        }
-        cmd.query(self)   
-    }
+	fn xread_block_multiple<B: ToRedisArgs, RV: FromRedisValue>(
+		&mut self,
+		block: B,
+		entries: &[(String, String)],
+	) -> RedisResult<RV> {
+		let mut cmd = cmd("XREAD");
+		cmd.arg("BLOCK").arg(block).arg("STREAMS");
+		for &(ref s, _) in entries.iter() {
+			cmd.arg(s);
+		}
+		for &(_, ref i) in entries.iter() {
+			cmd.arg(i);
+		}
+		cmd.query(self)
+	}
 
-    fn xread_count<S: ToRedisArgs, I: ToRedisArgs, RV: FromRedisValue>(&mut self, count: isize, stream: S, id: I) -> RedisResult<RV> {
-        cmd("XREAD").arg("COUNT").arg(count).arg("STREAMS").arg(stream).arg(id).query(self)
-    }
+	fn xread_count<S: ToRedisArgs, I: ToRedisArgs, RV: FromRedisValue>(
+		&mut self,
+		count: isize,
+		stream: S,
+		id: I,
+	) -> RedisResult<RV> {
+		cmd("XREAD")
+			.arg("COUNT")
+			.arg(count)
+			.arg("STREAMS")
+			.arg(stream)
+			.arg(id)
+			.query(self)
+	}
 
-    fn xread_count_multiple<RV: FromRedisValue>(&mut self, count: isize, entries: &[(String, String)]) -> RedisResult<RV> {
-        let mut cmd = cmd("XREAD");
-        cmd.arg("COUNT").arg(count).arg("STREAMS");
-        for &(ref s, _) in entries.iter() {
-            cmd.arg(s);
-        }
-        for &(_, ref i) in entries.iter() {
-            cmd.arg(i);
-        }
-        cmd.query(self)         }
+	fn xread_count_multiple<RV: FromRedisValue>(
+		&mut self,
+		count: isize,
+		entries: &[(String, String)],
+	) -> RedisResult<RV> {
+		let mut cmd = cmd("XREAD");
+		cmd.arg("COUNT").arg(count).arg("STREAMS");
+		for &(ref s, _) in entries.iter() {
+			cmd.arg(s);
+		}
+		for &(_, ref i) in entries.iter() {
+			cmd.arg(i);
+		}
+		cmd.query(self)
+	}
 
+	fn xread_count_block<B: ToRedisArgs, S: ToRedisArgs, I: ToRedisArgs, RV: FromRedisValue>(
+		&mut self,
+		count: isize,
+		block: B,
+		stream: S,
+		id: I,
+	) -> RedisResult<RV> {
+		cmd("XREAD")
+			.arg("COUNT")
+			.arg(count)
+			.arg("BLOCK")
+			.arg(block)
+			.arg("STREAMS")
+			.arg(stream)
+			.arg(id)
+			.query(self)
+	}
 
-    fn xread_count_block<B: ToRedisArgs, S: ToRedisArgs, I: ToRedisArgs, RV: FromRedisValue>(&mut self, count: isize, block: B, stream: S, id: I) -> RedisResult<RV> {
-        cmd("XREAD").arg("COUNT").arg(count).arg("BLOCK").arg(block).arg("STREAMS").arg(stream).arg(id).query(self)
-    }
-
-    fn xread_count_block_multiple<B: ToRedisArgs, RV: FromRedisValue>(&mut self, count: isize, block: B, entries: &[(String, String)]) -> RedisResult<RV> {
-        let mut cmd = cmd("XREAD");
-        cmd.arg("COUNT").arg(count).arg("BLOCK").arg(block).arg("STREAMS");
-        for &(ref s, _) in entries.iter() {
-            cmd.arg(s);
-        }
-        for &(_, ref i) in entries.iter() {
-            cmd.arg(i);
-        }
-        cmd.query(self)        
-    }    
+	fn xread_count_block_multiple<B: ToRedisArgs, RV: FromRedisValue>(
+		&mut self,
+		count: isize,
+		block: B,
+		entries: &[(String, String)],
+	) -> RedisResult<RV> {
+		let mut cmd = cmd("XREAD");
+		cmd.arg("COUNT")
+			.arg(count)
+			.arg("BLOCK")
+			.arg(block)
+			.arg("STREAMS");
+		for &(ref s, _) in entries.iter() {
+			cmd.arg(s);
+		}
+		for &(_, ref i) in entries.iter() {
+			cmd.arg(i);
+		}
+		cmd.query(self)
+	}
 }
 
 pub struct Stream {
-    id: Value,
-    entries: Vec<Entry>,
+	id: Value,
+	entries: Vec<Entry>,
 }
 
 impl Stream {
-    pub fn id<RV: FromRedisValue>(&self) -> RedisResult<RV> {
-        from_redis_value(&self.id)
-    }
+	pub fn id<RV: FromRedisValue>(&self) -> RedisResult<RV> {
+		from_redis_value(&self.id)
+	}
 
-    pub fn entries(&self) -> slice::Iter<Entry> {
-        self.entries.iter()
-    }
+	pub fn entries(&self) -> slice::Iter<Entry> {
+		self.entries.iter()
+	}
 }
 
 impl FromRedisValue for Stream {
-    fn from_redis_value(v: &Value) -> RedisResult<Stream> {
-        let (id, entries) : (Value, Vec<Entry>) = from_redis_value(v)?;
-        Ok(Stream {
-            id: id,
-            entries: entries,
-        })
-    }
+	fn from_redis_value(v: &Value) -> RedisResult<Stream> {
+		let (id, entries): (Value, Vec<Entry>) = from_redis_value(v)?;
+		Ok(Stream {
+			id: id,
+			entries: entries,
+		})
+	}
 }
 
 pub struct Entry {
-    id: Value,
-    key_values: Vec<Value>,
+	id: Value,
+	key_values: Vec<Value>,
 }
 
 impl FromRedisValue for Entry {
-    fn from_redis_value(v: &Value) -> RedisResult<Entry> {
-        let (id, key_values) : (Value, Vec<Value>) = from_redis_value(v)?;
-        Ok(Entry {
-            id: id,
-            key_values: key_values,
-        })
-    }    
+	fn from_redis_value(v: &Value) -> RedisResult<Entry> {
+		let (id, key_values): (Value, Vec<Value>) = from_redis_value(v)?;
+		Ok(Entry {
+			id: id,
+			key_values: key_values,
+		})
+	}
 }
 
 impl Entry {
-    pub fn id<RV: FromRedisValue>(&self) -> RedisResult<RV> {
-        from_redis_value(&self.id)
-    }
+	pub fn id<RV: FromRedisValue>(&self) -> RedisResult<RV> {
+		from_redis_value(&self.id)
+	}
 
-    pub fn key_values(&self) -> slice::Iter<Value> {
-        self.key_values.iter()
-    }
+	pub fn key_values(&self) -> slice::Iter<Value> {
+		self.key_values.iter()
+	}
 }
 
-
 pub trait HandleEntry {
-    type Error;
-    fn handle_entry(&mut self, stream: &str, entry: &Entry) -> Result<(), Self::Error>;
-    fn handle_timeout(&mut self, _duration: u32) -> Result<(), Self::Error> { Ok(()) }
+	type Error;
+	fn handle_entry(&mut self, stream: &str, entry: &Entry) -> Result<(), Self::Error>;
+	fn handle_timeout(&mut self, _duration: u32) -> Result<(), Self::Error> {
+		Ok(())
+	}
 }
 
 // pub struct KeyValue {
@@ -269,134 +566,134 @@ pub trait HandleEntry {
 //             key: key,
 //             value: value
 //         })
-//     }    
+//     }
 // }
-
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use itertools::Itertools;
+	use super::*;
+	use itertools::Itertools;
 
-    #[test]
-    fn test_abc() {
-        let client = redis::Client::open("redis://127.0.0.1/").unwrap();
-        let con = client.get_connection().unwrap();
-        let _: () = con.set("abc", "def").unwrap();
-        let v: String = con.get("abc").unwrap();
-        assert!(v == "def");
-        let _: () = con.del("abc").unwrap();
-    }
+	#[test]
+	fn test_abc() {
+		let client = Client::open("redis://127.0.0.1/").unwrap();
+		let con = client.get_connection().unwrap();
+		let _: () = con.set("abc", "def").unwrap();
+		let v: String = con.get("abc").unwrap();
+		assert!(v == "def");
+		let _: () = con.del("abc").unwrap();
+	}
 
-    #[test]
-    fn test_stream() {
-        let client = redis::Client::open("redis://127.0.0.1/").unwrap();
-        let mut con = client.get_connection().unwrap();
-        let _: () = con.del("mystream").unwrap();
-        
-        // XADD mystream * abc 123 def 456
+	#[test]
+	fn test_stream() {
+		let client = Client::open("redis://127.0.0.1/").unwrap();
+		let mut con = client.get_connection().unwrap();
+		let _: () = con.del("mystream").unwrap();
 
-        let s: String = con.xadd_multiple("mystream", &[("abc","123"), ("def", "456")]).unwrap();
+		// XADD mystream * abc 123 def 456
 
-        // XLEN mystream
+		let s: String = con
+			.xadd_multiple("mystream", &[("abc", "123"), ("def", "456")])
+			.unwrap();
 
-        let v: u32 = con.xlen("mystream").unwrap();
+		// XLEN mystream
 
-        assert_eq!(v, 1);
+		let v: u32 = con.xlen("mystream").unwrap();
 
-        // XREAD COUNT 1 STREAMS mystream -
+		assert_eq!(v, 1);
 
-        let v: Option<Vec<Stream>> = con.xread_count(1, "mystream", "-").unwrap();
+		// XREAD COUNT 1 STREAMS mystream -
 
-        // bulk(
-        //    bulk(
-        //       string-data('"mystream"'), 
-        //       bulk(
-        //         bulk(
-        //           status("1515790156195-0"), 
-        //           bulk(
-        //             string-data('"abc"'), 
-        //             string-data('"123"')
-        //             string-data('"def"'), 
-        //             string-data('"456"')
-        //  )))))
+		let v: Option<Vec<Stream>> = con.xread_count(1, "mystream", "-").unwrap();
 
-        if let Some(ref streams) = v {
-            for stream in streams.iter() {
-                let stream_id: String = stream.id().unwrap();
-                assert_eq!(stream_id, "mystream");
+		// bulk(
+		//    bulk(
+		//       string-data('"mystream"'),
+		//       bulk(
+		//         bulk(
+		//           status("1515790156195-0"),
+		//           bulk(
+		//             string-data('"abc"'),
+		//             string-data('"123"')
+		//             string-data('"def"'),
+		//             string-data('"456"')
+		//  )))))
 
-                for entry in stream.entries() {
-                    let entry_id: String = entry.id().unwrap();
-                    assert_eq!(entry_id, s);
+		if let Some(ref streams) = v {
+			for stream in streams.iter() {
+				let stream_id: String = stream.id().unwrap();
+				assert_eq!(stream_id, "mystream");
 
-                    for (n, (k, v)) in entry.key_values().tuples().enumerate() {
-                        let k: String = from_redis_value(k).unwrap();
-                        let v: String = from_redis_value(v).unwrap();
+				for entry in stream.entries() {
+					let entry_id: String = entry.id().unwrap();
+					assert_eq!(entry_id, s);
 
-                        match n {
-                            0 => {
-                                assert_eq!(k, "abc");
-                                assert_eq!(v, "123");
-                            },
-                            1 => {
-                                assert_eq!(k, "def");
-                                assert_eq!(v, "456");
-                            },
-                            _ => panic!("unexpected key value entry"),
-                        }
-                    }
-                }
-            }
-        }
+					for (n, (k, v)) in entry.key_values().tuples().enumerate() {
+						let k: String = from_redis_value(k).unwrap();
+						let v: String = from_redis_value(v).unwrap();
 
-        let _: () = con.del("mystream").unwrap();
-    }
+						match n {
+							0 => {
+								assert_eq!(k, "abc");
+								assert_eq!(v, "123");
+							}
+							1 => {
+								assert_eq!(k, "def");
+								assert_eq!(v, "456");
+							}
+							_ => panic!("unexpected key value entry"),
+						}
+					}
+				}
+			}
+		}
 
-    #[test]
-    fn test_xtrim() {
-        let client = redis::Client::open("redis://127.0.0.1/").unwrap();
-        let mut con = client.get_connection().unwrap();
+		let _: () = con.del("mystream").unwrap();
+	}
 
-        let stream_id = "_test_xtrim";
+	#[test]
+	fn test_xtrim() {
+		let client = Client::open("redis://127.0.0.1/").unwrap();
+		let mut con = client.get_connection().unwrap();
 
-        let _: () = con.del(stream_id).unwrap();
-        let _: () = con.xadd(stream_id, "abc", 123).unwrap();
-        let _: () = con.xadd(stream_id, "abc", 456).unwrap();
-        let n: usize = con.xlen(stream_id).unwrap();
-        assert_eq!(n, 2);
-        let _: () = con.xtrim_maxlen(stream_id, 1).unwrap();
-        let n: usize = con.xlen(stream_id).unwrap();
-        assert_eq!(n, 1);
-        let _: () = con.del(stream_id).unwrap();
-    }
+		let stream_id = "_test_xtrim";
 
-    #[test]
-    fn test_xdel() {
-        let client = redis::Client::open("redis://127.0.0.1/").unwrap();
-        let mut con = client.get_connection().unwrap();
+		let _: () = con.del(stream_id).unwrap();
+		let _: () = con.xadd(stream_id, "abc", 123).unwrap();
+		let _: () = con.xadd(stream_id, "abc", 456).unwrap();
+		let n: usize = con.xlen(stream_id).unwrap();
+		assert_eq!(n, 2);
+		let _: () = con.xtrim_maxlen(stream_id, 1).unwrap();
+		let n: usize = con.xlen(stream_id).unwrap();
+		assert_eq!(n, 1);
+		let _: () = con.del(stream_id).unwrap();
+	}
 
-        let stream_id = "_test_xdel";
+	#[test]
+	fn test_xdel() {
+		let client = Client::open("redis://127.0.0.1/").unwrap();
+		let mut con = client.get_connection().unwrap();
 
-        let _: () = con.del(stream_id).unwrap();
-        let a: String = con.xadd(stream_id, "abc", 123).unwrap();
-        let b: String = con.xadd(stream_id, "abc", 456).unwrap();
-        let n: usize = con.xlen(stream_id).unwrap();
-        assert_eq!(n, 2);
-        let x: usize = con.xdel(stream_id, a).unwrap();
-        assert_eq!(x, 1);
-        let x: usize = con.xdel(stream_id, b).unwrap();
-        assert_eq!(x, 1);
+		let stream_id = "_test_xdel";
 
-        // NOTE: xlen does not currently return adjusted count
-        // let n: usize = con.xlen(stream_id).unwrap();
-        // assert_eq!(n, 0);
+		let _: () = con.del(stream_id).unwrap();
+		let a: String = con.xadd(stream_id, "abc", 123).unwrap();
+		let b: String = con.xadd(stream_id, "abc", 456).unwrap();
+		let n: usize = con.xlen(stream_id).unwrap();
+		assert_eq!(n, 2);
+		let x: usize = con.xdel(stream_id, a).unwrap();
+		assert_eq!(x, 1);
+		let x: usize = con.xdel(stream_id, b).unwrap();
+		assert_eq!(x, 1);
 
-        let entries: Vec<Entry> = con.xrange(stream_id, "-", "+").unwrap();
-        assert_eq!(entries.len(), 0);
+		// NOTE: xlen does not currently return adjusted count
+		// let n: usize = con.xlen(stream_id).unwrap();
+		// assert_eq!(n, 0);
 
-        let _: () = con.del(stream_id).unwrap();
-        
-    }
+		let entries: Vec<Entry> = con.xrange(stream_id, "-", "+").unwrap();
+		assert_eq!(entries.len(), 0);
+
+		let _: () = con.del(stream_id).unwrap();
+	}
 
 }
